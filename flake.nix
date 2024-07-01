@@ -27,7 +27,11 @@
           };
         };
 
-        devShells.default = self.checks.${system}.koika;
+        devShells.default = self.packages.${system}.default.overrideAttrs(final: prev: {
+          shellHook = ''
+            [[ -v SHELL ]] && exec "$SHELL"
+          '';
+        });
 
         packages = {
           default = self.packages.${system}.coq8_18-koika;
