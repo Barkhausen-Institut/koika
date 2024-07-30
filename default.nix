@@ -4,6 +4,7 @@
   coq,
   boost,
   python3,
+  clang-tools,
   sphinx,
   doCheck ? false,
 }:
@@ -30,6 +31,7 @@ mkCoqDerivation rec {
   nativeBuildInputs = [
     python3
     sphinx
+    clang-tools
   ];
 
   buildInputs = [

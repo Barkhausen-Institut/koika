@@ -68,74 +68,163 @@ Proof.
       eauto.
 Qed.
 
+Lemma nth_error_nil_None {A} (n : nat) :
+  List.nth_error (@nil A) n = None.
+Proof.
+  rewrite nth_error_None. auto with arith.
+Qed.
+
+Lemma add_schuffle (a b c: nat):
+  a + b + c = b + c + a.
+Proof.
+  rewrite (@Nat.add_comm a b), Nat.add_shuffle0.
+  reflexivity.
+Qed.
+
+Fixpoint nth_error_prod0 {A1} (l1: list A1):
+  forall n x,
+  nth_error l1 n = Some x ->
+  nth_error l1 n = Some x.
+Proof.
+  intros. assumption.
+Qed.
+
+Fixpoint nth_error_prod {A1 A2} (l1: list A1) (l2 : list A2):
+  forall n1 n2 x y,
+  nth_error l1 n1 = Some x ->
+  nth_error l2 n2 = Some y ->
+  nth_error (list_prod l1 l2) (n1 * length l2 + n2) = Some (x,y).
+Proof.
+  intros n1 n2 x y H1 H2.
+  destruct l1.
+  - rewrite nth_error_nil_None in H1.
+    discriminate.
+  - destruct n1 as [| n1'].
+    + rewrite Nat.mul_0_l in *.
+      rewrite Nat.add_0_l in *.
+      simpl (list_prod _).
+      cbv beta.
+      rewrite nth_error_app1.
+      * rewrite nth_error_map.
+        rewrite H2.
+        simpl (option_map _ _).
+        simpl in H1.
+        inversion H1 as [H1'].
+        reflexivity.
+      * rewrite map_length.
+        apply nth_error_Some.
+        rewrite H2.
+        discriminate.
+    + simpl in H1.
+      simpl (list_prod _).
+      cbv beta.
+      rewrite nth_error_app2.
+      all: rewrite map_length.
+      * simpl.
+        rewrite add_schuffle.
+        rewrite Nat.add_sub.
+        apply (nth_error_prod); assumption.
+      * simpl.
+        auto with arith.
+Qed.
+
+Inductive FiniteType_norec (T: Type) :=
+  | finite_type_norec : FiniteType_norec T.
+
 Fixpoint nth_error_app_l {A} (l l' : list A):
   forall n x,
     nth_error l n = Some x ->
     nth_error (l ++ l') n = Some x.
 Proof.
-  destruct l, n; cbn; (solve [inversion 1] || eauto).
-Defined.
+  intros.
+  erewrite nth_error_app1.
+  - assumption.
+  - apply nth_error_Some.
+    rewrite H.
+    discriminate.
+Qed.
 
-Fixpoint map_nth_error {A B} (l: list A) (f: A -> B) {struct l}:
-  forall n x,
-    nth_error l n = Some x ->
-    nth_error (map f l) n = Some (f x).
+Fixpoint nth_error_app_r {A} (l l' : list A):
+forall n x,
+  nth_error l n = Some x ->
+  nth_error (l' ++ l) (n + length l') = Some x.
 Proof.
-  destruct l, n; cbn;inversion 1; eauto.
-Defined.
+  intros.
+  erewrite nth_error_app2.
+  - rewrite Nat.add_sub. assumption.
+  - auto with arith.
+Qed.
 
-Ltac list_length l :=
-  lazymatch l with
-  | _ :: ?tl => let len := list_length tl in constr:(S len)
-  | _ => constr:(0)
+Lemma nth_error_cons {A} (a : A) (l : list A):
+forall x n,
+  nth_error l n = Some x ->
+  nth_error (a :: l) (S n) = Some x.
+Proof.
+intros.
+simpl.
+assumption.
+Qed.
+
+  (* nth_error (A'' :: map B'' finite_elements ++ ?l') ?Goal0 = Some C'' *)
+Ltac FiniteType_t_clean_up_list :=
+  lazymatch goal with
+  | [ |- nth_error (_ :: _) _ = Some _ ] =>
+    apply nth_error_cons; FiniteType_t_clean_up_list
+  | [ |- nth_error (_ ++ _) _ = Some _ ] =>
+    apply nth_error_app_r; FiniteType_t_clean_up_list
+  | _ => idtac
   end.
 
-Inductive FiniteType_norec (T: Type) :=
-  | finite_type_norec : FiniteType_norec T.
+
+(* (fun a      => A a)
+(fun A '(a,b) => A a b)
+(fun B '(a,b) => B a b)
+(fun '((a,b),c) => A a b c) *)
+(* ((fun A '((a,b),c) => A a b c) B'') *)
+Ltac map_function_rec con :=
+  lazymatch con with
+  | ?f ?x ?y =>
+    let y := (map_function_rec (f x)) in constr:((fun A '(a,b) => A a b) y)
+  | ?f ?x => constr:(f)
+  end.
+
+(* (nth_error_prod _ _ _ _ _ _ (nth_error_prod _ _ _ _ _ _ (nth_error_prod0 _ _ _ _) _) _) *)
+(* (nth_error_prod _ _ _ _ _ _ (nth_error_prod0 _ _ _ _) _). *)
+Ltac prod_function_rec con :=
+  lazymatch con with
+  | ?f ?x ?y =>
+    let y := (prod_function_rec (f x)) in uconstr:(nth_error_prod _ _ _ _ _ _ y _)
+  | ?f ?x => uconstr:(nth_error_prod0 _ _ _ _)
+  end.
 
 Ltac FiniteType_t_compute_index :=
-  vm_compute;
+  FiniteType_t_clean_up_list;
   lazymatch goal with
-  | [  |- _ ?l ?idx = Some ?x ] =>
-    let len := list_length l in
-    match x with
-    | ?f ?y =>
-      let tx := type of x in
-      let idx' := fresh "index" in
-      evar (idx': nat); unify idx (len + idx'); subst idx';
-      vm_compute; apply nth_error_app_l, map_nth_error;
-      (* Must call typeclasses eauto manually, because plain typeclass resolution
-         doesn't operate in the current context (and so FiniteType_norec isn't
-         taken into account). *)
-      pose proof (finite_type_norec tx);
+  | [ |- nth_error _ _ = Some ?con ] =>
+    match con with
+    | _ _ =>
+      apply nth_error_app_l;
+      let func1 := map_function_rec con in
+      rewrite (nth_error_map (func1));
+      let func2 := prod_function_rec (con) in
+      unshelve erewrite func2;
+      lazymatch goal with 
+      | [|-  _ = _ ] => idtac
+      | _ => shelve
+      end;
+      [> .. | simpl; reflexivity];
       lazymatch goal with
       | [ |- _ = Some ?z ] =>
-        let tx' := type of z in
-        eapply (finite_surjective (T := tx') (FiniteType := ltac:(typeclasses eauto)))
+        let tz' := type of z in
+        let tx := type of con in pose proof (finite_type_norec tx);
+        eapply (finite_surjective (T := tz') (FiniteType := ltac:(typeclasses eauto)))
       end
-    | ?x => instantiate (1 := len);
-           instantiate (1 := _ :: _);
-           vm_compute; reflexivity
-    | _ => idtac
+    | _ =>
+      instantiate (1 := 0);
+      instantiate (1 := _ :: _)
+      ;reflexivity
     end
   end.
-
-(* This variant uses a counter shared between all goals to compute indices faster: *)
-(* Fixpoint symmetric_plus (x y: nat) := *)
-(*   match x with *)
-(*   | O => y *)
-(*   | S x => symmetric_plus x (S y) *)
-(*   end. *)
-(* Ltac finite_compute_index' counter := *)
-(*   try (compute in counter; *)
-(*        match (eval unfold counter in counter) with *)
-(*        | symmetric_plus ?n ?cst => *)
-(*          instantiate (1 := S _) in (Value of counter); *)
-(*          lazymatch goal with *)
-(*          | [  |- nth_error ?l ?idx = _ ] => *)
-(*            unify idx cst; cbn; instantiate (1 := (_ :: _)); reflexivity *)
-(*          end *)
-(*        end). *)
 
 Ltac FiniteType_t_nodup_increasing :=
   apply increasing_NoDup;
@@ -150,27 +239,34 @@ Ltac FiniteType_t :=
   | [ H: FiniteType_norec ?T |- FiniteType ?T ] => fail "Type" T "is recursive"
   | [  |- FiniteType ?T ] =>
     let nm := fresh in
-    FiniteType_t_init;
-    [ intros nm; destruct nm; [> FiniteType_t_compute_index ..] |
-      instantiate (1 := []); FiniteType_t_nodup_increasing ];
-    fold (@nth_error nat)
+    unshelve econstructor;
+    [ destruct 1; shelve
+    | shelve
+    | intros nm; destruct nm; [> FiniteType_t_compute_index ..]
+    | instantiate (1 := []); FiniteType_t_nodup_increasing ]
   end.
 
 Hint Extern 1 (FiniteType _) => FiniteType_t : typeclass_instances.
 
 Module Examples.
-  Inductive t    := A | B.
-  Inductive t'   := A' | B'.
-  Inductive t''  := A'' | B'' (x': t) | C''.
-  Inductive t''' := A''' | B''' (x': t) | C''' | D''' (x' : t').
+  Inductive t0 := A0 | B0.
+  Inductive t1 := A1 | B1 (x: t0) | C1.
+  Inductive t2 := A2 | B2 (x: t1) | C2 | D2 (x: t0).
+  Inductive t3 := A3 (x y: t2) (z: t1) | B3 (x y z: t0) | C3.
 
-  Instance t'f : FiniteType t'.
-  Proof. FiniteType_t. Defined.
+  Instance t0f : FiniteType t0 := _.
+  Instance t1f : FiniteType t1 := _.
+  Instance t2f : FiniteType t2 := _.
+  Instance t3f : FiniteType t3 := _.
 
-  Instance t''f: FiniteType t''.
-  Proof. FiniteType_t. Defined.
+  Inductive t_recursive := A_r (x': t_recursive) (y': t0) | B_r.
 
-  Instance t'''f: FiniteType t'''.
-  Proof. FiniteType_t. Defined.
+  Fail Instance t_recursive_f : FiniteType t_recursive := _.
 
+  Inductive t_mut_recursive : Set := 
+  | A4 | B4 | C4 (x: t_mut2)
+  with t_mut2 : Set :=
+  | A5 | B5 (x1: t_mut_recursive) | C5.
+
+  Fail Instance t_mut_recursive_f : FiniteType_t t_mut_recursive := _.
 End Examples.
