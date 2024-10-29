@@ -130,6 +130,36 @@ Notation _must_succeed_vm r :=
 Notation _must_succeed_native r :=
   (extract_success r (@eq_refl bool true <<: is_success r = true)).
 
+Ltac solve_eqdec_t :=
+  repeat match goal with
+  | |- context [EqDec.eq_dec ?x ?x] =>
+    try rewrite eq_dec_refl || vm_compute (EqDec.eq_dec x x)
+  | |- context [EqDec.eq_dec ?x ?y] =>
+    vm_compute (EqDec.eq_dec x y)
+  end.
+
+(* This tactic will first try to rewrite `eq_dec` occurrences
+  in order to handles cases like `forall s, ... EqDec.eq_dec s s ...`,
+  which could not be solved by vm_compute.
+
+  For that the goal needs to be simplified very carefully which is done
+  by leaving `eq_dec` opaque, such that it cannot be unfolded by `cbn` *)
+Ltac tc_action_dependent_t :=
+  cbv zeta;
+  unfold TypeInference.tc_action;
+  repeat match goal with
+  | _ => progress with_strategy opaque [ EqDec.eq_dec ] cbn
+  | _ => progress solve_eqdec_t
+  | |- context [type_action] => unfold type_action
+  | |- context [cast_action] => unfold cast_action
+  | |- context [cast_action'] => unfold cast_action'
+  end;
+  reflexivity.
+
+Ltac _extract_success_dependent r :=
+  let eq_pr := constr:(ltac:(tc_action_dependent_t) : is_success r = true) in
+  exact (extract_success r eq_pr).
+
 Inductive TC_Strategy := TC_conv | TC_vm | TC_native.
 Ltac _tc_strategy := exact TC_vm.
 
@@ -146,6 +176,10 @@ Ltac _extract_success r :=
 Ltac _tc_action_fast R Sigma sig tau uaction :=
   let result := constr:(desugar_and_tc_action R Sigma sig tau uaction) in
   _extract_success result.
+
+Ltac _tc_action_dependent R Sigma sig tau uaction :=
+  let result := constr:(desugar_and_tc_action R Sigma sig tau uaction) in
+  _extract_success_dependent result.
 
 Arguments place_error_beacon {var_t fn_name_t reg_t ext_fn_t} / rev_target current_path a : assert.
 
@@ -199,8 +233,13 @@ Ltac _tc_illtyped_action R Sigma sig tau uaction :=
   let result := constr:(desugar_and_tc_action R Sigma sig tau annotated) in
   _report_typechecking_errors uaction result.
 
+(* type checking is done aggressively by [_tc_action_fast]
+  if that fails [_tc_action_dependent] tries to solve it
+  with specialized tactics which handle certain corner cases better,
+  but slower *)
 Ltac _tc_action R Sigma sig tau uaction :=
   (_tc_action_fast R Sigma sig tau uaction ||
+  _tc_action_dependent R Sigma sig tau uaction ||
    _tc_illtyped_action R Sigma sig tau uaction).
 
 (* FIXME: Find a way to propagate reg_t and ext_fn_t from R and Sigma to ua.
